@@ -259,7 +259,7 @@ static void random_play(int depth) {
   hands[player] = c;
 
   /* reinsert removed piles */
-  for (int i = 0; i < num_removed; ++i) {
+  for (int i = num_removed - 1; i >= 0; --i) {
     card *tmp = *removed_from[i];
     *removed_from[i] = removed[i];
     removed[i]->right = tmp;
