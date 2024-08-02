@@ -115,7 +115,7 @@ static void random_play(int depth) {
   card **plus_one_hand = NULL;
 
   /* location in hand of given card */
-  card **give_hand = NULL;
+  card **given_hand = NULL;
 
   /* location in hand of played card */
   card **played_hand = NULL;
@@ -209,12 +209,12 @@ static void random_play(int depth) {
   else if (c->action == GIVE) {
     /* just give the first card in hand */
     if (hands[player]) {
-      give_hand = &hands[player];
-      card *give = *give_hand;
+      given_hand = &hands[player];
+      card *give = *given_hand;
       /* put it in the other player's hand */
       card *tmp = hands[other];
       hands[other] = give;
-      *give_hand = give->down;
+      *given_hand = give->down;
       give->down = tmp;
     }
   }
@@ -252,7 +252,7 @@ static void random_play(int depth) {
   }
 
   /* take back the card given to the other player */
-  if (give_hand) {
+  if (given_hand) {
     card *tmp = hands[player];
     hands[player] = hands[other];
     hands[other] = hands[other]->down;
