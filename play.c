@@ -98,29 +98,35 @@ static void random_play(int depth) {
   int player = depth % 2;
   int other = (depth + 1) % 2;
 
-  /* removed piles, either type or color */
+  /* removed piles (by type or color) */
   card *removed[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
-  card **removed_from[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
+  /* location of removed pile on table */
+  card **removed_table[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
   int num_removed = 0;
 
-  /* what pile was a cover card put on */
-  card **cover_parent = NULL;
+  /* location of cover card put on table */
+  card **cover_table = NULL;
 
-  /* what pile was taken, and where is it in the hand */
+  /* location of pile taken on table and in hand (tail) */
   card **pile_taken_hand = NULL;
   card **pile_taken_table = NULL;
 
-  /* plus one played */
+  /* location in hand of additional card played */
   card **plus_one_hand = NULL;
 
-  /* location of given card */
+  /* location in hand of given card */
   card **give_hand = NULL;
+
+  /* location in hand of played card */
+  card **played_hand = NULL;
 
   /* everybody is done */
   if (hands[0] == NULL && hands[1] == NULL)
     return;
 
-  card *c = hands[player];
+  /* for now just play the first card in the hand */
+  played_hand = &hands[player];
+  card *c = *played_hand;
 
   /* curent player has no cards left, let the other player go */
   if (c == NULL) {
@@ -129,7 +135,7 @@ static void random_play(int depth) {
   }
 
   /* remove from hand */
-  hands[player] = c->down;
+  *played_hand = c->down;
   c->down = NULL;
 
   /* remove other piles with same color or type */
@@ -143,7 +149,7 @@ static void random_play(int depth) {
 
         /* keep track of removed piles */
         removed[num_removed] = *p;
-        removed_from[num_removed] = p;
+        removed_table[num_removed] = p;
         ++num_removed;
 
         /* remove from table (instead of advancing p) */
@@ -156,10 +162,10 @@ static void random_play(int depth) {
 
   else if (c->action == COVER) {
     /* put it on the first pile on the table */
-    cover_parent = &table;
-    while (*cover_parent)
-      cover_parent = &(*cover_parent)->down;
-    *cover_parent = c;
+    cover_table = &table;
+    while (*cover_table)
+      cover_table = &(*cover_table)->down;
+    *cover_table = c;
   }
 
   else if (c->action == TAKE) {
@@ -190,12 +196,12 @@ static void random_play(int depth) {
     /* just play the first card in hand */
     if (hands[player]) {
       plus_one_hand = &hands[player];
-      card *extra = hands[player];
+      card *extra = *plus_one_hand;
       /* put it on the table */
       extra->right = table;
       table = extra;
       /* remove it from the hand */
-      hands[player] = extra->down;
+      *plus_one_hand = extra->down;
       extra->down = NULL;
     }
   }
@@ -204,11 +210,11 @@ static void random_play(int depth) {
     /* just give the first card in hand */
     if (hands[player]) {
       give_hand = &hands[player];
-      card *give = hands[player];
+      card *give = *give_hand;
       /* put it in the other player's hand */
       card *tmp = hands[other];
       hands[other] = give;
-      hands[player] = give->down;
+      *give_hand = give->down;
       give->down = tmp;
     }
   }
@@ -224,7 +230,7 @@ static void random_play(int depth) {
 
   /* remove from table */
   if (c->action == COVER) {
-    *cover_parent = NULL;
+    *cover_table = NULL;
   } else if (c->action == TAKE) {
     /* return taken pile to table */
     card *tmp = *pile_taken_table;
@@ -255,13 +261,13 @@ static void random_play(int depth) {
 
   /* put played card back in hand */
   c->right = NULL;
-  c->down = hands[player];
-  hands[player] = c;
+  c->down = *played_hand;
+  *played_hand = c;
 
   /* reinsert removed piles */
   for (int i = num_removed - 1; i >= 0; --i) {
-    card *tmp = *removed_from[i];
-    *removed_from[i] = removed[i];
+    card *tmp = *removed_table[i];
+    *removed_table[i] = removed[i];
     removed[i]->right = tmp;
   }
 
