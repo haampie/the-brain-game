@@ -1,6 +1,7 @@
 .PHONY: all clean  format test
 
-BRAIN_CFLAGS = -std=c99 -Wall -pedantic -O0 -g
+CFLAGS = -O0 -g
+BRAIN_CFLAGS = -std=c99 -Wall -Wextra -Wpedantic
 
 all: play
 

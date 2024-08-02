@@ -269,7 +269,7 @@ static void random_play(int depth) {
   print_state();
 }
 
-int main(int argc, char **argv) {
+int main(void) {
 
   for (int i = 0; i < 36; ++i) {
     cards[i].right = NULL;
