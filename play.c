@@ -32,7 +32,7 @@ enum card_action {
 };
 enum card_type {
   DRAGON,
-  DUCK,
+  GOOSE,
   CAT,
   UNICORN,
   FROG,
@@ -42,7 +42,7 @@ enum card_type {
 char *card_color_str[] = {"GREEN", "RED", "GRAY", "PURPLE", "BLUE", "YELLOW"};
 char *card_action_str[] = {"REMOVE_TYPE", "REMOVE_COLOR", "COVER",
                            "GIVE",        "TAKE",         "PLUS_ONE"};
-char *card_type_str[] = {"DRAGON", "DUCK", "CAT", "UNICORN", "FROG", "ZOMBIE"};
+char *card_type_str[] = {"DRAGON", "GOOSE", "CAT", "UNICORN", "FROG", "ZOMBIE"};
 
 typedef struct card {
   struct card *right;
@@ -120,15 +120,13 @@ static int play(int depth) {
     /* current card */
     card *c = *played_hand;
 
-    /* the following is state to be able to undo a move */
+    /* remove from hand */
+    *played_hand = c->down;
+    c->down = NULL;
 
-    /* removed piles (type / color) and their location */
-    card *removed[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
-    card **removed_table[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
-    int num_removed = 0;
-
-    /* location of cover card put on table */
-    card **cover_table = NULL;
+    /* down link for covered card */
+    card **covered_pile = &table;
+    card **covered_card = NULL;
 
     /* location of pile taken on table and in hand (tail) */
     card **pile_taken_hand = NULL;
@@ -137,153 +135,170 @@ static int play(int depth) {
     /* location in hand of additional card played */
     card **plus_one_hand = NULL;
 
+    /* removed piles (type / color) and their location */
+    card *removed[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
+    card **removed_table[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
+    int num_removed = 0;
+
     /* location in hand of given card */
     card **given_hand = NULL;
 
-    /* remove from hand */
-    *played_hand = c->down;
-    c->down = NULL;
+    int won = 0;
 
-    switch (c->action) {
-    case REMOVE_COLOR:
-    case REMOVE_TYPE: {
-      /* remove other piles with same color or type */
-      for (card **p = &table; *p;) {
-        card *q = *p;
-        while (q->down)
-          q = q->down;
-        if ((c->action == REMOVE_COLOR && q->color == c->remove_color) ||
-            (c->action == REMOVE_TYPE && q->type == c->remove_type)) {
+    /* sub moves (for PLUS_ONE, COVER, TAKE, GIVE) */
+    for (int submove = 0;; ++submove) {
+      switch (c->action) {
+      case REMOVE_COLOR:
+      case REMOVE_TYPE: {
+        /* remove other piles with same color or type */
+        for (card **p = &table; *p;) {
+          card *q = *p;
+          while (q->down)
+            q = q->down;
+          if ((c->action == REMOVE_COLOR && q->color == c->remove_color) ||
+              (c->action == REMOVE_TYPE && q->type == c->remove_type)) {
 
-          /* keep track of removed piles */
-          removed[num_removed] = *p;
-          removed_table[num_removed] = p;
-          ++num_removed;
+            /* keep track of removed piles */
+            removed[num_removed] = *p;
+            removed_table[num_removed] = p;
+            ++num_removed;
 
-          /* remove from table (instead of advancing p) */
-          *p = (*p)->right;
-        } else {
-          p = &(*p)->right;
+            /* remove from table (instead of advancing p) */
+            *p = (*p)->right;
+          } else {
+            p = &(*p)->right;
+          }
         }
-      }
-      break;
-    }
-
-    case COVER: {
-      /* put it on the first pile on the table */
-      cover_table = &table;
-      while (*cover_table)
-        cover_table = &(*cover_table)->down;
-      *cover_table = c;
-      break;
-    }
-
-    case TAKE: {
-      /* find the first pile that has no take back card */
-      card **p;
-      for (p = &table; *p; p = &(*p)->right) {
-        if ((*p)->action == TAKE)
-          continue;
         break;
       }
-      pile_taken_table = p;
 
-      /* iterate to tail of the hand */
-      card **h = &hands[player];
-      while (*h)
-        h = &(*h)->down;
-      pile_taken_hand = h;
+      case COVER: {
+        /* put it on the next pile on the table */
+        covered_card = covered_pile;
+        while (*covered_card)
+          covered_card = &(*covered_card)->down;
+        *covered_card = c;
+        break;
+      }
 
-      /* move pile to hand, and replace pile on table with card c */
-      card *tmp = *p;
-      *p = c;
-      c->right = tmp->right;
-      tmp->right = NULL; /* unnecessary? */
-      *h = tmp;
-      break;
-    }
+      case TAKE: {
+        /* find the first pile that has no take back card */
+        card **p;
+        for (p = &table; *p; p = &(*p)->right) {
+          if ((*p)->action == TAKE)
+            continue;
+          break;
+        }
+        pile_taken_table = p;
 
-    case PLUS_ONE: {
-      /* just play the first card in hand */
-      if (hands[player]) {
-        plus_one_hand = &hands[player];
-        card *extra = *plus_one_hand;
-        /* put it on the table */
-        extra->right = table;
-        table = extra;
-        /* remove it from the hand */
-        *plus_one_hand = extra->down;
-        extra->down = NULL;
+        /* iterate to tail of the hand */
+        card **h = &hands[player];
+        while (*h)
+          h = &(*h)->down;
+        pile_taken_hand = h;
+
+        /* move pile to hand, and replace pile on table with card c */
+        card *tmp = *p;
+        *p = c;
+        c->right = tmp ? tmp->right : NULL;
+        // tmp->right = NULL; /* unnecessary? */
+        *h = tmp;
+        break;
+      }
+
+      case PLUS_ONE: {
+        /* only play plus one if the player has cards */
+        if (hands[player]) {
+          plus_one_hand = &hands[player];
+          card *extra = *plus_one_hand;
+          /* put it on the table */
+          extra->right = table;
+          table = extra;
+          /* remove it from the hand */
+          *plus_one_hand = extra->down;
+          extra->down = NULL;
+        }
+        break;
+      }
+
+      case GIVE: {
+        /* just give the first card in hand */
+        if (hands[player]) {
+          given_hand = &hands[player];
+          card *give = *given_hand;
+          /* put it in the other player's hand */
+          card *tmp = hands[other];
+          hands[other] = give;
+          *given_hand = give->down;
+          give->down = tmp;
+        }
+        break;
+      }
+      }
+
+      /* put card on the table */
+      if (c->action != COVER && c->action != TAKE) {
+        c->right = table;
+        table = c;
+      }
+
+      /* next turn */
+      won = play(depth + 1);
+
+      /* remove from table */
+      switch (c->action) {
+      case COVER:
+        *covered_card = NULL;
+        break;
+      case TAKE: {
+        /* return taken pile to table if any */
+        card *tmp = *pile_taken_table;
+        *pile_taken_table = *pile_taken_hand;
+        if (*pile_taken_table)
+          (*pile_taken_table)->right = tmp->right;
+        /* remove taken pile from hand */
+        *pile_taken_hand = NULL;
+        break;
+      }
+      default: {
+        table = table->right;
+        break;
+      }
+      }
+
+      /* put extra card from table in hand and remove from table */
+      if (plus_one_hand) {
+        card *tmp = *plus_one_hand;
+        *plus_one_hand = table;
+        table->down = tmp;
+        table = table->right;
+        (*plus_one_hand)->right = NULL;
+      }
+
+      /* take back the card given to the other player */
+      if (c->action == GIVE && given_hand) {
+        card *tmp = hands[player];
+        hands[player] = hands[other];
+        hands[other] = hands[other]->down;
+        hands[player]->down = tmp;
+      }
+
+      /* reinsert removed piles */
+      for (int i = num_removed - 1; i >= 0; --i) {
+        card *tmp = *removed_table[i];
+        *removed_table[i] = removed[i];
+        removed[i]->right = tmp;
+      }
+
+      if (won)
+        break;
+
+      /* advance the pile for next cover move */
+      if (c->action == COVER && *covered_pile) {
+        covered_pile = &(*covered_pile)->right;
+        continue;
       }
       break;
-    }
-
-    case GIVE: {
-      /* just give the first card in hand */
-      if (hands[player]) {
-        given_hand = &hands[player];
-        card *give = *given_hand;
-        /* put it in the other player's hand */
-        card *tmp = hands[other];
-        hands[other] = give;
-        *given_hand = give->down;
-        give->down = tmp;
-      }
-      break;
-    }
-    }
-
-    /* put card on the table */
-    if (c->action != COVER && c->action != TAKE) {
-      c->right = table;
-      table = c;
-    }
-
-    /* next turn */
-    int won = play(depth + 1);
-
-    /* remove from table */
-    switch (c->action) {
-    case COVER:
-      *cover_table = NULL;
-      break;
-    case TAKE: {
-      /* return taken pile to table */
-      card *tmp = *pile_taken_table;
-      *pile_taken_table = *pile_taken_hand;
-      (*pile_taken_table)->right = tmp->right;
-      /* remove taken pile from hand */
-      *pile_taken_hand = NULL;
-      break;
-    }
-    default: {
-      table = table->right;
-      break;
-    }
-    }
-
-    /* put extra card from table in hand and remove from table */
-    if (plus_one_hand) {
-      card *tmp = *plus_one_hand;
-      *plus_one_hand = table;
-      table->down = tmp;
-      table = table->right;
-      (*plus_one_hand)->right = NULL;
-    }
-
-    /* take back the card given to the other player */
-    if (given_hand) {
-      card *tmp = hands[player];
-      hands[player] = hands[other];
-      hands[other] = hands[other]->down;
-      hands[player]->down = tmp;
-    }
-
-    /* reinsert removed piles */
-    for (int i = num_removed - 1; i >= 0; --i) {
-      card *tmp = *removed_table[i];
-      *removed_table[i] = removed[i];
-      removed[i]->right = tmp;
     }
 
     /* put played card back in hand */
@@ -321,7 +336,7 @@ int main(void) {
 
   /* take random cards from the pile for both players */
   for (int player = 0; player < 2; ++player) {
-    for (int i = 0; i < 18; ++i) {
+    for (int i = 0; i < 6; ++i) {
       unsigned int idx = random_next() % pile_size;
       card *c = pile[idx];
       c->down = hands[player];
