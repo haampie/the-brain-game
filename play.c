@@ -7,7 +7,7 @@ static inline uint64_t rotl(const uint64_t x, int k) {
   return (x << k) | (x >> (64 - k));
 }
 
-static uint64_t s[4] = {1, 2, 3, 4};
+static uint64_t s[4] = {3, 2, 1, 4};
 
 uint64_t random_next(void) {
   const uint64_t result = rotl(s[0] + s[3], 23) + s[0];
@@ -56,48 +56,59 @@ typedef struct card {
   enum card_type remove_type;
 } card;
 
-static void print_card(card *p) {
-  printf("%s %s %s", card_color_str[p->color], card_type_str[p->type],
+static void print_card(FILE * stream, card *p) {
+  fprintf(stream, "%s %s %s", card_color_str[p->color], card_type_str[p->type],
          card_action_str[p->action]);
   if (p->action == REMOVE_TYPE)
-    printf(":%s", card_type_str[p->remove_type]);
+    fprintf(stream, ":%s", card_type_str[p->remove_type]);
   else if (p->action == REMOVE_COLOR)
-    printf(":%s", card_color_str[p->remove_color]);
+    fprintf(stream, ":%s", card_color_str[p->remove_color]);
 }
 
-static uint8_t pile_size = 36;
+static uint8_t draw_pile_size = 36;
 static card cards[36];
 static card *hands[2] = {NULL, NULL};
 static card *table = NULL;
 static card *pile[36];
 
-static void print_state(void) {
-  printf("table:\n");
+static void print_state(FILE * stream) {
+  fprintf(stream, "table:\n");
   for (card *p = table; p; p = p->right) {
     for (card *q = p; q; q = q->down) {
-      printf("  ");
-      print_card(q);
+      fprintf(stream, "  ");
+      print_card(stream, q);
     }
-    printf("\n");
+    fprintf(stream, "\n");
   }
 
   for (int player = 0; player < 2; ++player) {
-    printf("player %d\n", player + 1);
+    fprintf(stream, "player %d\n", player + 1);
     for (card *p = hands[player]; p; p = p->down) {
-      printf("  ");
-      print_card(p);
-      printf("\n");
+      fprintf(stream, "  ");
+      print_card(stream, p);
+      fprintf(stream, "\n");
     }
   }
+  fprintf(stream, "pile size = %d\n", draw_pile_size);
 }
+
+static uint64_t nodes = 0;
+
+#define MAX_PILES 5
 
 static int play(int depth) {
   int player = depth % 2;
 
+  if (++nodes % 100000000 == 0) {
+      fprintf(stderr, "nodes: %llu. depth = %d\n", nodes, depth);
+      print_state(stderr);
+      fprintf(stderr, "\n");
+  }
+
   /* early exit if get to 5 cards or more */
   int piles_on_table = 0;
   for (card *t = table; t; t = t->right)
-    if (++piles_on_table == 5)
+    if (++piles_on_table == MAX_PILES)
       return 0;
 
   /* no cards to play, skip to next player */
@@ -106,9 +117,9 @@ static int play(int depth) {
 
   /* both players are done, game is won */
   if (hands[player] == NULL) {
-    printf("[%d] ", depth);
-    print_state();
-    printf("\n");
+    fprintf(stdout, "[%d] ", depth);
+    print_state(stdout);
+    fprintf(stdout, "\n");
     return 1;
   }
 
@@ -117,8 +128,15 @@ static int play(int depth) {
   /* iterate over all cards in hand */
   for (card **played_hand = &hands[player]; *played_hand;
        played_hand = &(*played_hand)->down) {
+
     /* current card */
     card *c = *played_hand;
+
+    /* avoid playing all branches of losing moves */
+    if (piles_on_table >= MAX_PILES - 1 && c->action == GIVE)
+        continue;
+    else if (piles_on_table >= MAX_PILES - 2 && c->action == PLUS_ONE)
+        continue;
 
     /* remove from hand */
     *played_hand = c->down;
@@ -132,21 +150,19 @@ static int play(int depth) {
     card **pile_taken_hand = NULL;
     card **pile_taken_table = NULL;
 
-    /* location in hand of additional card played */
-    card **plus_one_hand = NULL;
+    /* location in hand of additional card played (+1 or give) */
+    card **extra_from_hand = &hands[player];
 
     /* removed piles (type / color) and their location */
     card *removed[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
     card **removed_table[6] = {NULL, NULL, NULL, NULL, NULL, NULL};
     int num_removed = 0;
 
-    /* location in hand of given card */
-    card **given_hand = NULL;
-
     int won = 0;
 
     /* sub moves (for PLUS_ONE, COVER, TAKE, GIVE) */
-    for (int submove = 0;; ++submove) {
+    while (1) {
+      int extra_played = 0;
       switch (c->action) {
       case REMOVE_COLOR:
       case REMOVE_TYPE: {
@@ -207,30 +223,28 @@ static int play(int depth) {
       }
 
       case PLUS_ONE: {
-        /* only play plus one if the player has cards */
-        if (hands[player]) {
-          plus_one_hand = &hands[player];
-          card *extra = *plus_one_hand;
+        if (*extra_from_hand) {
+          card *second = *extra_from_hand;
           /* put it on the table */
-          extra->right = table;
-          table = extra;
+          second->right = table;
+          table = second;
           /* remove it from the hand */
-          *plus_one_hand = extra->down;
-          extra->down = NULL;
+          *extra_from_hand = second->down;
+          second->down = NULL;
+          extra_played = 1;
         }
         break;
       }
 
       case GIVE: {
-        /* just give the first card in hand */
-        if (hands[player]) {
-          given_hand = &hands[player];
-          card *give = *given_hand;
+        if (*extra_from_hand) {
+          card *give = *extra_from_hand;
           /* put it in the other player's hand */
           card *tmp = hands[other];
           hands[other] = give;
-          *given_hand = give->down;
+          *extra_from_hand = give->down;
           give->down = tmp;
+          extra_played = 1;
         }
         break;
       }
@@ -242,8 +256,25 @@ static int play(int depth) {
         table = c;
       }
 
+      /* take a card from the pile */
+      int draw_card = draw_pile_size > 0;
+
+      if (draw_card) {
+        card *drawn = pile[--draw_pile_size];
+        drawn->down = hands[player];
+        hands[player] = drawn;
+      }
+
       /* next turn */
       won = play(depth + 1);
+
+      /* put card back on the pile */
+      if (draw_card) {
+          ++draw_pile_size;
+          card *drawn = hands[player];
+          hands[player] = drawn->down;
+          drawn->down = NULL;
+      }
 
       /* remove from table */
       switch (c->action) {
@@ -266,21 +297,22 @@ static int play(int depth) {
       }
       }
 
-      /* put extra card from table in hand and remove from table */
-      if (plus_one_hand) {
-        card *tmp = *plus_one_hand;
-        *plus_one_hand = table;
+      if (c->action == PLUS_ONE && extra_played) {
+        /* put from table in hand */
+        card *tmp = *extra_from_hand;
+        *extra_from_hand = table;
         table->down = tmp;
+        /* remove from table */
         table = table->right;
-        (*plus_one_hand)->right = NULL;
+        (*extra_from_hand)->right = NULL; /* optional */
       }
 
       /* take back the card given to the other player */
-      if (c->action == GIVE && given_hand) {
-        card *tmp = hands[player];
-        hands[player] = hands[other];
+      else if (c->action == GIVE && extra_played) {
+        card *tmp = *extra_from_hand;
+        *extra_from_hand = hands[other];
         hands[other] = hands[other]->down;
-        hands[player]->down = tmp;
+        (*extra_from_hand)->down = tmp;
       }
 
       /* reinsert removed piles */
@@ -293,9 +325,13 @@ static int play(int depth) {
       if (won)
         break;
 
-      /* advance the pile for next cover move */
       if (c->action == COVER && *covered_pile) {
+        /* advance the pile for next cover move */
         covered_pile = &(*covered_pile)->right;
+        continue;
+      } else if (extra_played && (*extra_from_hand)->down) {
+        /* advance next card in hand to be +1'ed */
+        extra_from_hand = &(*extra_from_hand)->down;
         continue;
       }
       break;
@@ -307,9 +343,9 @@ static int play(int depth) {
     *played_hand = c;
 
     if (won) {
-      printf("[%d] ", depth);
-      print_state();
-      printf("\n");
+      fprintf(stdout, "[%d] ", depth);
+      print_state(stdout);
+      fprintf(stdout, "\n");
       return 1;
     }
   }
@@ -330,20 +366,56 @@ int main(void) {
     cards[i].remove_type = (cards[i].type + 5) % 6;
   }
 
-  /* create a pile that can be reordered */
-  for (int i = 0; i < pile_size; ++i)
+  /* create a pile that can be shuffeled */
+  for (int i = 0; i < 36; ++i)
     pile[i] = &cards[i];
 
-  /* take random cards from the pile for both players */
+  /* shuffle */
+  for (int i = 0; i < draw_pile_size; ++i) {
+    int j = i + random_next() % (draw_pile_size - i);
+    card *tmp = pile[j];
+    pile[j] = pile[i];
+    pile[i] = tmp;
+  }
+
+  /* deal from the end of the deck */
   for (int player = 0; player < 2; ++player) {
-    for (int i = 0; i < 6; ++i) {
-      unsigned int idx = random_next() % pile_size;
-      card *c = pile[idx];
+    for (int i = 0; i < 5; ++i) {
+      card *c = pile[--draw_pile_size];
       c->down = hands[player];
       hands[player] = c;
-      pile[idx] = pile[--pile_size];
     }
   }
 
-  play(0);
+  for (int simulation = 0; simulation < 10; ++simulation) {
+    print_state(stdout);
+    fprintf(stdout, "\n");
+    fprintf(stdout, "simulation %d\n", simulation);
+    play(0);
+
+    /* remove hand from player 2 */
+    card *p = hands[1];
+    while (p) {
+      card *tmp = p->down;
+      p->down = NULL;
+      p = tmp;
+      ++draw_pile_size;
+    }
+    hands[1] = NULL;
+
+    /* shuffle the deck again (excluding player 1's hand) */
+    for (int i = 0; i < draw_pile_size; ++i) {
+      int j = i + random_next() % (draw_pile_size - i);
+      card *tmp = pile[j];
+      pile[j] = pile[i];
+      pile[i] = tmp;
+    }
+
+    /* deal player 2 cards */
+    for (int i = 0; i < 5; ++i) {
+      card *c = pile[--draw_pile_size];
+      c->down = hands[1];
+      hands[1] = c;
+    }
+  }
 }
