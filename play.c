@@ -10,7 +10,7 @@ static inline uint64_t rotl(const uint64_t x, int k) {
   return (x << k) | (x >> (64 - k));
 }
 
-static uint64_t s[4] = {10, 9, 8, 7};
+static uint64_t s[4] = {1, 2, 3, 4};
 
 uint64_t random_next(void) {
   const uint64_t result = rotl(s[0] + s[3], 23) + s[0];
@@ -75,6 +75,47 @@ static void print_card(FILE *stream, card *p) {
     fprintf(stream, ":%s", card_color_str[p->remove_color]);
 }
 
+static int winnable(card **remaining_cards, int n_remaining) {
+  int n_cover = 0;
+  int n_removal = 0;
+  card *removal_cards[12];
+
+  /* first locate removal cards and count cover cards */
+  for (int i = 0; i < n_remaining; ++i) {
+    switch (remaining_cards[i]->action) {
+    case REMOVE_TYPE:
+    case REMOVE_COLOR:
+      removal_cards[n_removal++] = remaining_cards[i];
+      break;
+    case COVER:
+      ++n_cover;
+      break;
+    }
+  }
+
+  /* remove removable cards */
+  for (int i = 0; i < n_remaining;) {
+    card *a = remaining_cards[i];
+    int removed = 0;
+    for (int j = 0; j < n_removal; ++j) {
+      card *b = removal_cards[j];
+      if ((b->action == REMOVE_TYPE && a->type == b->remove_type) ||
+          (b->action == REMOVE_COLOR && a->color == b->remove_color)) {
+
+        removed = 1;
+        break;
+      }
+    }
+    if (removed)
+      remaining_cards[i] = remaining_cards[--n_remaining];
+    else
+      ++i;
+  }
+
+  /* at best each over card removes one further parent */
+  return n_remaining - n_cover < MAX_PILES;
+}
+
 static uint8_t draw_pile_size = 36;
 static card cards[36];
 static card *hands[2] = {NULL, NULL};
@@ -114,28 +155,15 @@ static void print_state(FILE *stream, int depth) {
 
 static uint64_t nodes = 0;
 
-static int play(int depth) {
+static int play(int depth, int static_check, uint64_t max_nodes) {
   int player = depth % 2;
 
-  if (++nodes % (128 * 1024 * 1024) < 10) {
+  if (++nodes % (128 * 1024 * 1024) == 0) {
     indent(stderr, depth);
     fprintf(stderr, "nodes: %llu. depth = %d\n", nodes, depth);
     print_state(stderr, depth);
     fprintf(stderr, "\n");
     fflush(stderr);
-  }
-
-  /* no cards to play, skip to next player */
-  if (hands[player] == NULL)
-    player = (player + 1) % 2;
-
-  /* both players are done, game is won */
-  if (hands[player] == NULL) {
-    fprintf(stdout, "[%d] ", depth);
-    print_state(stdout, 0);
-    fprintf(stdout, "\n");
-    fflush(stdout);
-    return 1;
   }
 
   /* count the number of cards of a color / type */
@@ -160,6 +188,22 @@ static int play(int depth) {
     }
   }
 
+  /* no cards to play, skip to next player */
+  if (hands[player] == NULL)
+    player = (player + 1) % 2;
+
+  /* both players are done, game is won */
+  if (hands[player] == NULL) {
+    fprintf(stdout, "[%d] ", depth);
+    print_state(stdout, 0);
+    fprintf(stdout, "\n");
+    fflush(stdout);
+    return 1;
+  }
+
+  if (nodes >= max_nodes)
+    return 0;
+
   int cards_in_hand = 0;
   for (card *h = hands[player]; h; h = h->down)
     ++cards_in_hand;
@@ -168,6 +212,24 @@ static int play(int depth) {
 
   move moves[300];
   int legal_moves = 0;
+
+  /* check if statically not winnable */
+  if (draw_pile_size == 0 && static_check) {
+    int n_remaining = 0;
+    card *remaining[36];
+
+    /* from hands */
+    for (int player = 0; player < 2; ++player)
+      for (card *h = hands[player]; h; h = h->down)
+        remaining[n_remaining++] = h;
+    /* from table */
+    for (card *t = table; t; t = t->right)
+      for (card *q = t; q; q = q->down)
+        remaining[n_remaining++] = q;
+
+    if (!winnable(remaining, n_remaining))
+      return 0;
+  }
 
   /* generate all moves */
   for (card **h = &hands[player]; *h; h = &(*h)->down) {
@@ -271,7 +333,7 @@ static int play(int depth) {
     *m.hand = c->down;
     c->down = NULL;
 
-    card **covered_card = NULL; /* covered card's down pointer */
+    card **covered_card = NULL;    /* covered card's down pointer */
     card **pile_taken_hand = NULL; /* location of pile in hand */
 
     /* removed piles (type / color) and their location */
@@ -365,7 +427,8 @@ static int play(int depth) {
     }
 
     /* next turn */
-    won = play(depth + 1);
+    won = play(depth + 1, c->action == REMOVE_TYPE || c->action == REMOVE_COLOR,
+               max_nodes);
 
     /* put card back on the pile */
     if (draw_card) {
@@ -476,11 +539,19 @@ int main(void) {
     }
   }
 
-  for (int simulation = 0; simulation < 10; ++simulation) {
+  int total_solved = 0;
+  uint64_t total_nodes = 0;
+  for (int simulation = 0; simulation < 1000; ++simulation) {
     print_state(stdout, 0);
     fprintf(stdout, "\n");
     fprintf(stdout, "simulation %d\n", simulation);
-    play(0);
+
+    if (play(0, 0, 5000000) == 1)
+      ++total_solved;
+
+    total_nodes += nodes;
+
+    nodes = 0;
 
     /* remove hand from player 2 */
     card *p = hands[1];
@@ -508,5 +579,5 @@ int main(void) {
     }
   }
 
-  printf("total nodes: %llu\n", nodes);
+  printf("total nodes: %llu\ntotal solutions: %d\n", total_nodes, total_solved);
 }
