@@ -633,6 +633,7 @@ int main(void) {
 
   int games_won = 0;
   int total_games = 100;
+  int total_runs = 30;
 
   init_state(&simulation);
 
@@ -668,7 +669,7 @@ int main(void) {
 
       int wins = 0, losses = 0;
 
-      for (int run = 0; run < 30; ++run) {
+      for (int run = 0; run < total_runs; ++run) {
         simulation.nodes = 0;
 
         /* put the other player's hand back in the pile (todo: retain received
@@ -707,7 +708,9 @@ int main(void) {
           saved_move m = simulation.stack[0];
           int card_idx = (m.hand - simulation.cards) * 37 +
                          (m.extra ? m.extra - simulation.cards : 36);
-          ++move_count[card_idx];
+          /* increment count and early exit if we certainly play this */
+          if (++move_count[card_idx] > total_runs / 2)
+            break;
         }
       }
 
