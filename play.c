@@ -4,9 +4,9 @@
 
 #define MAX_PILES 5
 #define NUM_START 5
-#define MAX_NODES_PER_SIMULATION 150
+#define MAX_NODES_PER_SIMULATION 100
 #define TOTAL_GAMES 100
-#define TOTAL_SIMULATIONS 8000
+#define TOTAL_SIMULATIONS 5000
 
 /* random numbers */
 static inline uint64_t rotl(const uint64_t x, int k) {
@@ -46,7 +46,7 @@ enum card_type {
 }; /* type = (color - action + 5) % 6 */
 
 char *card_color_esc[] = {
-    "\033[;42m", "\033[;41m", "\033[;47m",
+    "\033[;42m", "\033[;41m", "\033[;100m",
     "\033[;45m", "\033[;44m", "\033[;43m",
 };
 char *card_color_str[] = {"GREEN", "RED", "GRAY", "PURPLE", "BLUE", "YELLOW"};
@@ -64,6 +64,9 @@ typedef struct card {
   /* set if type is REMOVE_COLOR / REMOVE_TYPE */
   enum card_color remove_color;
   enum card_type remove_type;
+
+  /* 1 if taken or given */
+  int open;
 } card;
 
 typedef struct move {
@@ -89,7 +92,7 @@ typedef struct game_state {
   int depth;
 } game_state;
 
-static void print_card(FILE *stream, card *p) {
+static void print_card(FILE *stream, card *p, int show_open) {
   fprintf(stream, "%s%s %s", card_color_esc[p->color], card_type_str[p->type],
           card_action_str[p->action]);
   if (p->action == REMOVE_TYPE)
@@ -98,6 +101,8 @@ static void print_card(FILE *stream, card *p) {
     fprintf(stream, ":%s%s", card_color_esc[p->remove_color],
             card_color_str[p->remove_color]);
   fprintf(stream, "\033[0m");
+  if (show_open && p->open)
+    fprintf(stream, " [visible]");
 }
 
 static int winnable(card **remaining_cards, int n_remaining) {
@@ -153,7 +158,7 @@ static void print_state(FILE *stream, game_state *s, int depth) {
     indent(stream, depth);
     for (card *q = p; q; q = q->down) {
       fprintf(stream, "  ");
-      print_card(stream, q);
+      print_card(stream, q, 0);
     }
     fprintf(stream, "\n");
   }
@@ -164,7 +169,7 @@ static void print_state(FILE *stream, game_state *s, int depth) {
     for (card *p = s->hands[player]; p; p = p->down) {
       indent(stream, depth);
       fprintf(stream, "  ");
-      print_card(stream, p);
+      print_card(stream, p, 1);
       fprintf(stream, "\n");
     }
   }
@@ -173,7 +178,7 @@ static void print_state(FILE *stream, game_state *s, int depth) {
   for (int i = 0; i < s->draw_pile_size; ++i) {
     indent(stream, depth);
     fprintf(stream, "  ");
-    print_card(stream, s->pile[i]);
+    print_card(stream, s->pile[i], 0);
     fprintf(stream, "\n");
   }
 }
@@ -572,6 +577,7 @@ static void init_state(game_state *s) {
     s->cards[i].type = (s->cards[i].color - s->cards[i].action + 6) % 6;
     s->cards[i].remove_color = (s->cards[i].color + 1) % 6;
     s->cards[i].remove_type = (s->cards[i].type + 5) % 6;
+    s->cards[i].open = 0;
   }
 
   s->table = NULL;
@@ -616,6 +622,7 @@ static void random_init(game_state *s) {
 static void copy_game_state(game_state *src, game_state *dst) {
   for (int i = 0; i < 36; ++i) {
     dst->pile[i] = dst->cards + (src->pile[i] - src->cards);
+    dst->cards[i].open = src->cards[i].open;
     dst->cards[i].right = src->cards[i].right
                               ? dst->cards + (src->cards[i].right - src->cards)
                               : NULL;
@@ -696,12 +703,18 @@ int main(void) {
       for (int run = 0; run < TOTAL_SIMULATIONS; ++run) {
         simulation.nodes = 0;
 
-        /* put the other player's hand back in the pile (todo: retain received
-         * cards) */
+        /* put the other player's cards back in the pile */
         int num_cards_other_player = 0;
-        while (simulation.hands[other]) {
-          simulation.pile[simulation.draw_pile_size] = simulation.hands[other];
-          simulation.hands[other] = simulation.hands[other]->down;
+        card **other_hand = &simulation.hands[other];
+        while (*other_hand) {
+          /* retain visible cards */
+          if ((*other_hand)->open) {
+            other_hand = &(*other_hand)->down;
+            continue;
+          }
+          /* put non-visible cards back in the pile */
+          simulation.pile[simulation.draw_pile_size] = *other_hand;
+          *other_hand = (*other_hand)->down;
           simulation.pile[simulation.draw_pile_size]->down = NULL;
           ++simulation.draw_pile_size;
           ++num_cards_other_player;
@@ -753,10 +766,10 @@ int main(void) {
         if (move_count[i] == 0)
           continue;
         saved_move mi = idx_to_move(&game, i);
-        print_card(stdout, mi.hand);
+        print_card(stdout, mi.hand, 0);
         if (mi.extra) {
           printf(" ");
-          print_card(stdout, mi.extra);
+          print_card(stdout, mi.extra, 0);
         }
         printf("\n");
         for (int j = 0; j < (70.0 * move_count[i]) / best_move; ++j)
@@ -833,6 +846,13 @@ int main(void) {
           *m.extra = c;
           c->right = tmp->right;
           *h = tmp;
+
+          /* mark the cards as open */
+          while (*h) {
+            (*h)->open = 1;
+            h = &(*h)->down;
+          }
+
           break;
         }
 
@@ -854,6 +874,8 @@ int main(void) {
           game.hands[other] = give;
           *m.extra = give->down;
           give->down = tmp;
+          /* mark as open */
+          give->open = 1;
           break;
         }
         }
