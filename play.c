@@ -177,7 +177,7 @@ static int play(game_state *s, int player, int static_check,
 
   if (verbose) {
     indent(stderr, s->depth);
-    fprintf(stderr, "nodes: %llu. depth = %d\n", s->nodes, s->depth);
+    fprintf(stderr, "nodes: %lu. depth = %d\n", s->nodes, s->depth);
     print_state(stderr, s, s->depth);
     fprintf(stderr, "\n");
     fflush(stderr);
@@ -728,7 +728,7 @@ int main(void) {
       print_card(stdout, best.hand);
 
       /* remove from hand */
-      move m;
+      move m = {NULL, NULL};
       card *c = best.hand;
       for (m.hand = &game.hands[player]; *m.hand != best.hand;
            m.hand = &(*m.hand)->down)
@@ -751,8 +751,6 @@ int main(void) {
                m.extra = &(*m.extra)->right)
             ;
         }
-      } else {
-        m.extra = NULL;
       }
       printf("\n");
 
