@@ -4,6 +4,9 @@
 
 #define MAX_PILES 5
 #define NUM_START 5
+#define MAX_NODES_PER_SIMULATION 150
+#define TOTAL_GAMES 100
+#define TOTAL_SIMULATIONS 8000
 
 /* random numbers */
 static inline uint64_t rotl(const uint64_t x, int k) {
@@ -42,6 +45,10 @@ enum card_type {
   ZOMBIE
 }; /* type = (color - action + 5) % 6 */
 
+char *card_color_esc[] = {
+    "\033[;42m", "\033[;41m", "\033[;47m",
+    "\033[;45m", "\033[;44m", "\033[;43m",
+};
 char *card_color_str[] = {"GREEN", "RED", "GRAY", "PURPLE", "BLUE", "YELLOW"};
 char *card_action_str[] = {"REMOVE_TYPE", "REMOVE_COLOR", "COVER",
                            "GIVE",        "TAKE",         "PLUS_ONE"};
@@ -83,12 +90,14 @@ typedef struct game_state {
 } game_state;
 
 static void print_card(FILE *stream, card *p) {
-  fprintf(stream, "%s %s %s", card_color_str[p->color], card_type_str[p->type],
+  fprintf(stream, "%s%s %s", card_color_esc[p->color], card_type_str[p->type],
           card_action_str[p->action]);
   if (p->action == REMOVE_TYPE)
     fprintf(stream, ":%s", card_type_str[p->remove_type]);
   else if (p->action == REMOVE_COLOR)
-    fprintf(stream, ":%s", card_color_str[p->remove_color]);
+    fprintf(stream, ":%s%s", card_color_esc[p->remove_color],
+            card_color_str[p->remove_color]);
+  fprintf(stream, "\033[0m");
 }
 
 static int winnable(card **remaining_cards, int n_remaining) {
@@ -171,8 +180,8 @@ static void print_state(FILE *stream, game_state *s, int depth) {
 
 static int verbose = 0;
 
-static int play(game_state *s, int player, int static_check,
-                uint64_t max_nodes) {
+static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
+                int forced_move) {
   ++s->nodes;
 
   if (verbose) {
@@ -251,7 +260,8 @@ static int play(game_state *s, int player, int static_check,
   }
 
   /* generate all moves */
-  for (card **h = &s->hands[player]; *h; h = &(*h)->down) {
+  int hand_idx = 0;
+  for (card **h = &s->hands[player]; *h; h = &(*h)->down, ++hand_idx) {
     card *c = *h;
     /* avoid illegal moves */
     if ((piles_on_table + 1) >= MAX_PILES && c->action == GIVE)
@@ -266,8 +276,14 @@ static int play(game_state *s, int player, int static_check,
       card *tmp = *h;
       *h = (*h)->down;
 
+      int extra_idx = 0;
+
       int pairs = 0;
-      for (card **e = &s->hands[player]; *e; e = &(*e)->down) {
+      for (card **e = &s->hands[player]; *e; e = &(*e)->down, ++extra_idx) {
+        /* only enqueue (A, B), (B, A) once if A == B on PLUS_ONE actions  */
+        if (c->action == PLUS_ONE && (*e)->action == PLUS_ONE &&
+            extra_idx < hand_idx)
+          continue;
         move *m = &moves[legal_moves++];
         m->hand = h;
         m->extra = e;
@@ -307,37 +323,47 @@ static int play(game_state *s, int player, int static_check,
     }
   }
 
-  /* reorder moves best-first */
-  for (int i = 0, j = 0; i < legal_moves; ++i) {
-    /* move +1 with +1 to front, move cards that remove >= 2 to front */
-    move m = moves[i];
-    enum card_action action = (*m.hand)->action;
-    if ((action == PLUS_ONE && m.extra &&
-         (m.hand == m.extra ? (*m.hand)->down : *m.extra)->action ==
-             PLUS_ONE) ||
-        (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] >= 2) ||
-        (action == REMOVE_COLOR && color_count[(*m.hand)->remove_color] >= 2) ||
-        (action == TAKE && m.extra &&
-         ((*m.extra)->action == REMOVE_TYPE ||
-          (*m.extra)->action == REMOVE_COLOR))) {
-      moves[i] = moves[j];
-      moves[j] = m;
-      ++j;
+  if (s->depth == 0) {
+    /* force the dictated move */
+    if (legal_moves > 0) {
+      moves[0] = moves[forced_move % legal_moves];
+      legal_moves = 1;
     }
-  }
+  } else {
+    /* reorder moves best-first */
+    for (int i = 0, j = 0; i < legal_moves; ++i) {
+      /* move +1 with +1 to front, move cards that remove >= 2 to front */
+      move m = moves[i];
+      enum card_action action = (*m.hand)->action;
+      if ((action == PLUS_ONE && m.extra &&
+           (m.hand == m.extra ? (*m.hand)->down : *m.extra)->action ==
+               PLUS_ONE) ||
+          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] >= 2) ||
+          (action == REMOVE_COLOR &&
+           color_count[(*m.hand)->remove_color] >= 2) ||
+          (action == TAKE && m.extra &&
+           ((*m.extra)->action == REMOVE_TYPE ||
+            (*m.extra)->action == REMOVE_COLOR))) {
+        moves[i] = moves[j];
+        moves[j] = m;
+        ++j;
+      }
+    }
 
-  /* move take back +1 to back, move remove nothing to back */
-  for (int i = 0, j = 0; i < legal_moves; ++i) {
-    int ii = legal_moves - i - 1;
-    int jj = legal_moves - j - 1;
-    move m = moves[ii];
-    enum card_action action = (*m.hand)->action;
-    if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
-        (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] == 0) ||
-        (action == REMOVE_COLOR && color_count[(*m.hand)->remove_color] == 0)) {
-      moves[ii] = moves[jj];
-      moves[jj] = m;
-      ++j;
+    /* move take back +1 to back, move remove nothing to back */
+    for (int i = 0, j = 0; i < legal_moves; ++i) {
+      int ii = legal_moves - i - 1;
+      int jj = legal_moves - j - 1;
+      move m = moves[ii];
+      enum card_action action = (*m.hand)->action;
+      if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
+          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] == 0) ||
+          (action == REMOVE_COLOR &&
+           color_count[(*m.hand)->remove_color] == 0)) {
+        moves[ii] = moves[jj];
+        moves[jj] = m;
+        ++j;
+      }
     }
   }
 
@@ -452,7 +478,7 @@ static int play(game_state *s, int player, int static_check,
     /* next turn */
     ++s->depth;
     won = play(s, other, c->action == REMOVE_TYPE || c->action == REMOVE_COLOR,
-               max_nodes);
+               max_nodes, 0);
     --s->depth;
 
     /* put card back on the pile */
@@ -632,16 +658,14 @@ int main(void) {
   game_state game;
 
   int games_won = 0;
-  int total_games = 100;
-  int total_runs = 30;
-
   init_state(&simulation);
 
   /* hand * (extra or NULL) */
   int move_count[36 * 37];
 
   /* number of games */
-  for (int g = 0; g < total_games; ++g) {
+  for (int g = 0; g < TOTAL_GAMES; ++g) {
+    printf("\n\nNEW GAME\n");
 
     random_init(&game);
 
@@ -669,7 +693,7 @@ int main(void) {
 
       int wins = 0, losses = 0;
 
-      for (int run = 0; run < total_runs; ++run) {
+      for (int run = 0; run < TOTAL_SIMULATIONS; ++run) {
         simulation.nodes = 0;
 
         /* put the other player's hand back in the pile (todo: retain received
@@ -698,7 +722,8 @@ int main(void) {
           simulation.hands[other] = c;
         }
 
-        int result = play(&simulation, player, 0, 10000000);
+        int result =
+            play(&simulation, player, 0, MAX_NODES_PER_SIMULATION, run);
 
         /* could not complete in time */
         if (result == 0) {
@@ -709,7 +734,7 @@ int main(void) {
           int card_idx = (m.hand - simulation.cards) * 37 +
                          (m.extra ? m.extra - simulation.cards : 36);
           /* increment count and early exit if we certainly play this */
-          if (++move_count[card_idx] > total_runs / 2)
+          if (++move_count[card_idx] > TOTAL_SIMULATIONS / 2)
             break;
         }
       }
@@ -719,22 +744,27 @@ int main(void) {
       int best_move = 0;
       int best_move_idx = -1;
       for (int i = 0; i < 36 * 37; ++i) {
-        if (move_count[i]) {
-          saved_move mi = idx_to_move(&game, i);
-          print_card(stdout, mi.hand);
-          if (mi.extra) {
-            printf("  ");
-            print_card(stdout, mi.extra);
-          }
-          printf(": ");
-          for (int j = 0; j < move_count[i]; ++j)
-            printf("*");
-          printf("\n");
-        }
         if (move_count[i] > best_move) {
           best_move = move_count[i];
           best_move_idx = i;
         }
+      }
+      for (int i = 0; i < 36 * 37; ++i) {
+        if (move_count[i] == 0)
+          continue;
+        saved_move mi = idx_to_move(&game, i);
+        print_card(stdout, mi.hand);
+        if (mi.extra) {
+          printf(" ");
+          print_card(stdout, mi.extra);
+        }
+        printf("\n");
+        for (int j = 0; j < (70.0 * move_count[i]) / best_move; ++j)
+          printf("*");
+        printf(" (%d)", move_count[i]);
+        if (i == best_move_idx)
+          printf(" !!");
+        printf("\n");
       }
 
       if (best_move_idx == -1) {
