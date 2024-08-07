@@ -618,6 +618,15 @@ static void copy_game_state(game_state *src, game_state *dst) {
   dst->table = src->table ? dst->cards + (src->table - src->cards) : NULL;
 }
 
+static saved_move idx_to_move(game_state *s, int idx) {
+  int hand = idx / 37;
+  int extra = idx % 37;
+  saved_move m = {.hand = s->cards + hand,
+                  .extra = extra == 36 ? NULL : s->cards + extra};
+
+  return m;
+}
+
 int main(void) {
   game_state simulation;
   game_state game;
@@ -693,7 +702,7 @@ int main(void) {
         /* could not complete in time */
         if (result == 0) {
           ++losses;
-        } else {
+        } else if (result == 1) {
           ++wins;
           saved_move m = simulation.stack[0];
           int card_idx = (m.hand - simulation.cards) * 37 +
@@ -707,6 +716,18 @@ int main(void) {
       int best_move = 0;
       int best_move_idx = -1;
       for (int i = 0; i < 36 * 37; ++i) {
+        if (move_count[i]) {
+          saved_move mi = idx_to_move(&game, i);
+          print_card(stdout, mi.hand);
+          if (mi.extra) {
+            printf("  ");
+            print_card(stdout, mi.extra);
+          }
+          printf(": ");
+          for (int j = 0; j < move_count[i]; ++j)
+            printf("*");
+          printf("\n");
+        }
         if (move_count[i] > best_move) {
           best_move = move_count[i];
           best_move_idx = i;
@@ -718,14 +739,7 @@ int main(void) {
         break;
       }
 
-      int hand_idx = best_move_idx / 37;
-      int extra_idx = best_move_idx % 37;
-
-      saved_move best = {.hand = game.cards + hand_idx,
-                         .extra =
-                             extra_idx == 36 ? NULL : game.cards + extra_idx};
-
-      print_card(stdout, best.hand);
+      saved_move best = idx_to_move(&game, best_move_idx);
 
       /* remove from hand */
       move m = {NULL, NULL};
@@ -737,8 +751,6 @@ int main(void) {
       best.hand->down = NULL;
 
       if (best.extra) {
-        printf("  ");
-        print_card(stdout, best.extra);
         /* locate other card in hand */
         if (best.hand->action == GIVE || best.hand->action == PLUS_ONE) {
           for (m.extra = &game.hands[player]; *m.extra != best.extra;
@@ -752,7 +764,6 @@ int main(void) {
             ;
         }
       }
-      printf("\n");
 
       /* todo: DRY playing a move */
       if (c->action == REMOVE_COLOR || c->action == REMOVE_TYPE) {
