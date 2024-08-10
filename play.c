@@ -270,7 +270,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
   int type_count[6] = {0};
   for (card *x = s->table; x; x = x->right) {
     card *y = x;
-    while (y->down) y = y->down;
+    while (y->down)
+      y = y->down;
     ++color_count[y->color];
     ++type_count[y->type];
   }
@@ -296,6 +297,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
 
       int pairs = 0;
       for (card **e = &s->hands[player]; *e; e = &(*e)->down, ++extra_idx) {
+        ++pairs;
         /* only enqueue (A, B), (B, A) once if A == B on PLUS_ONE actions  */
         if (c->action == PLUS_ONE && (*e)->action == PLUS_ONE &&
             extra_idx < hand_idx)
@@ -303,7 +305,6 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         move *m = &moves[legal_moves++];
         m->hand = h;
         m->extra = e;
-        ++pairs;
       }
       /* the card cannot be played with an extra */
       if (pairs == 0) {
@@ -354,8 +355,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
       if ((action == PLUS_ONE && m.extra &&
            (m.hand == m.extra ? (*m.hand)->down : *m.extra)->action ==
                PLUS_ONE) ||
-          (action == REMOVE_TYPE &&
-           type_count[(*m.hand)->remove_type] >= 2) ||
+          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] >= 2) ||
           (action == REMOVE_COLOR &&
            color_count[(*m.hand)->remove_color] >= 2) ||
           (action == TAKE && m.extra &&
@@ -374,8 +374,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
       move m = moves[ii];
       enum card_action action = (*m.hand)->action;
       if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
-          (action == REMOVE_TYPE &&
-           type_count[(*m.hand)->remove_type] == 0) ||
+          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] == 0) ||
           (action == REMOVE_COLOR &&
            color_count[(*m.hand)->remove_color] == 0)) {
         moves[ii] = moves[jj];
@@ -728,7 +727,7 @@ int main(void) {
 
   /* number of games */
   for (int g = 0; g < TOTAL_GAMES; ++g) {
-    printf("\n\nNEW GAME\n");
+    printf("\n\nGAME %d\n", g);
 
     random_init(&game);
 
@@ -760,39 +759,43 @@ int main(void) {
         simulation.nodes = 0;
 
         /* put the other player's cards back in the pile */
-        int num_cards_other_player = 0;
-        card **other_hand = &simulation.hands[other];
-        while (*other_hand) {
-          /* retain visible cards */
-          if ((*other_hand)->open) {
-            other_hand = &(*other_hand)->down;
-            continue;
+        if (simulation.draw_pile_size > 0) {
+          int num_cards_other_player = 0;
+          card **other_hand = &simulation.hands[other];
+          while (*other_hand) {
+            /* retain visible cards */
+            if ((*other_hand)->open) {
+              other_hand = &(*other_hand)->down;
+              continue;
+            }
+            /* put non-visible cards back in the pile */
+            simulation.pile[simulation.draw_pile_size] = *other_hand;
+            *other_hand = (*other_hand)->down;
+            simulation.pile[simulation.draw_pile_size]->down = NULL;
+            ++simulation.draw_pile_size;
+            ++num_cards_other_player;
           }
-          /* put non-visible cards back in the pile */
-          simulation.pile[simulation.draw_pile_size] = *other_hand;
-          *other_hand = (*other_hand)->down;
-          simulation.pile[simulation.draw_pile_size]->down = NULL;
-          ++simulation.draw_pile_size;
-          ++num_cards_other_player;
+
+          /* shuffle the deck */
+          for (int i = 0; i < simulation.draw_pile_size; ++i) {
+            int j = i + random_next() % (simulation.draw_pile_size - i);
+            card *tmp = simulation.pile[j];
+            simulation.pile[j] = simulation.pile[i];
+            simulation.pile[i] = tmp;
+          }
+
+          /* deal the other player new cards */
+          for (int i = 0; i < num_cards_other_player; ++i) {
+            card *c = simulation.pile[--simulation.draw_pile_size];
+            c->down = simulation.hands[other];
+            simulation.hands[other] = c;
+          }
         }
 
-        /* shuffle the deck */
-        for (int i = 0; i < simulation.draw_pile_size; ++i) {
-          int j = i + random_next() % (simulation.draw_pile_size - i);
-          card *tmp = simulation.pile[j];
-          simulation.pile[j] = simulation.pile[i];
-          simulation.pile[i] = tmp;
-        }
+        uint64_t max_nodes =
+            game.draw_pile_size == 0 ? -1 : MAX_NODES_PER_SIMULATION;
 
-        /* deal the other player new cards */
-        for (int i = 0; i < num_cards_other_player; ++i) {
-          card *c = simulation.pile[--simulation.draw_pile_size];
-          c->down = simulation.hands[other];
-          simulation.hands[other] = c;
-        }
-
-        int result =
-            play(&simulation, player, 0, MAX_NODES_PER_SIMULATION, run);
+        int result = play(&simulation, player, 0, max_nodes, run);
 
         /* could not complete in time */
         if (result == 0) {
@@ -805,6 +808,20 @@ int main(void) {
           /* increment count and early exit if we certainly play this */
           if (++move_count[card_idx] > TOTAL_SIMULATIONS / 2)
             break;
+        }
+
+        if (result == 1 && game.draw_pile_size == 0) {
+          printf("finish with\n");
+          for (int i = 0; simulation.stack[i].hand; ++i) {
+            saved_move m = simulation.stack[i];
+            print_card(stdout, m.hand, 0);
+            if (m.extra) {
+              printf(" ");
+              print_card(stdout, m.extra, 0);
+            }
+            printf("\n");
+          }
+          break;
         }
       }
 
@@ -875,10 +892,10 @@ int main(void) {
             q = q->down;
           if ((c->action == REMOVE_COLOR && q->color == c->remove_color) ||
               (c->action == REMOVE_TYPE && q->type == c->remove_type)) {
-              /* keep track of what is removed */
-              --game.pile_count;
-              for (card *r = *p; r; r = r->down)
-                remove_card(&game, r);
+            /* keep track of what is removed */
+            --game.pile_count;
+            for (card *r = *p; r; r = r->down)
+              remove_card(&game, r);
             *p = (*p)->right;
           } else {
             p = &(*p)->right;
