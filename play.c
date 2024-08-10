@@ -4,9 +4,9 @@
 
 #define MAX_PILES 5
 #define NUM_START 5
-#define MAX_NODES_PER_SIMULATION 100
+#define MAX_NODES_PER_SIMULATION 1000
 #define TOTAL_GAMES 100
-#define TOTAL_SIMULATIONS 6400
+#define TOTAL_SIMULATIONS 5000
 
 /* random numbers */
 static inline uint64_t rotl(const uint64_t x, int k) {
