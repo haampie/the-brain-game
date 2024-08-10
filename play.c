@@ -90,7 +90,52 @@ typedef struct game_state {
   saved_move stack[100];
   uint64_t nodes;
   int depth;
+
+  int cards_left;             /* number of non-discarded cards */
+  int left_of_color_type[36]; /* bool matrix[i, j] where i is color, j type */
+  int pile_count;             /* number of piles on the table */
+  int count_cover;            /* number of non-discarded cover cards */
+  int color_count[6];         /* number of non-discarded color cards */
+  int type_count[6];          /* number of non-discarded type cards */
+  int can_remove_color[6];    /* whether removal of color is not discarded */
+  int can_remove_type[6];     /* whether removal of type is not discarded */
 } game_state;
+
+static void remove_card(game_state *s, card *c) {
+  switch (c->action) {
+  case COVER:
+    --s->count_cover;
+    break;
+  case REMOVE_TYPE:
+    s->can_remove_type[c->remove_type] = 0;
+    break;
+  case REMOVE_COLOR:
+    s->can_remove_color[c->remove_color] = 0;
+  }
+
+  s->left_of_color_type[c->color * 6 + c->type] = 0;
+  --s->color_count[c->color];
+  --s->type_count[c->type];
+  --s->cards_left;
+}
+
+static void add_card(game_state *s, card *c) {
+  switch (c->action) {
+  case COVER:
+    ++s->count_cover;
+    break;
+  case REMOVE_TYPE:
+    s->can_remove_type[c->remove_type] = 1;
+    break;
+  case REMOVE_COLOR:
+    s->can_remove_color[c->remove_color] = 1;
+  }
+
+  s->left_of_color_type[c->color * 6 + c->type] = 1;
+  ++s->color_count[c->color];
+  ++s->type_count[c->type];
+  ++s->cards_left;
+}
 
 static void print_card(FILE *stream, card *p, int show_open) {
   fprintf(stream, "%s%s %s", card_color_esc[p->color], card_type_str[p->type],
@@ -105,45 +150,15 @@ static void print_card(FILE *stream, card *p, int show_open) {
     fprintf(stream, " [visible]");
 }
 
-static int winnable(card **remaining_cards, int n_remaining) {
-  int n_cover = 0;
-  int n_removal = 0;
-  card *removal_cards[12];
+static int winnable(game_state *s) {
+  int total_left = s->cards_left;
+  for (int color = 0; color < 6; ++color)
+    for (int type = 0; type < 6; ++type)
+      total_left -= (s->can_remove_color[color] | s->can_remove_type[type]) &
+                    s->left_of_color_type[6 * color + type];
 
-  /* first locate removal cards and count cover cards */
-  for (int i = 0; i < n_remaining; ++i) {
-    switch (remaining_cards[i]->action) {
-    case REMOVE_TYPE:
-    case REMOVE_COLOR:
-      removal_cards[n_removal++] = remaining_cards[i];
-      break;
-    case COVER:
-      ++n_cover;
-      break;
-    }
-  }
-
-  /* remove removable cards */
-  for (int i = 0; i < n_remaining;) {
-    card *a = remaining_cards[i];
-    int removed = 0;
-    for (int j = 0; j < n_removal; ++j) {
-      card *b = removal_cards[j];
-      if ((b->action == REMOVE_TYPE && a->type == b->remove_type) ||
-          (b->action == REMOVE_COLOR && a->color == b->remove_color)) {
-
-        removed = 1;
-        break;
-      }
-    }
-    if (removed)
-      remaining_cards[i] = remaining_cards[--n_remaining];
-    else
-      ++i;
-  }
-
-  /* at best each over card removes one further parent */
-  return n_remaining - n_cover < MAX_PILES;
+  /* every cover card can remove at best one other card */
+  return total_left - s->count_cover < MAX_PILES;
 }
 
 static void indent(FILE *stream, int depth) {
@@ -153,7 +168,26 @@ static void indent(FILE *stream, int depth) {
 
 static void print_state(FILE *stream, game_state *s, int depth) {
   indent(stream, depth);
-  fprintf(stream, "table:\n");
+  fprintf(stream, "total cards left: %d\n", s->cards_left);
+  indent(stream, depth);
+  fprintf(stream, "          ");
+  for (int color = 0; color < 6; ++color)
+    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ",
+            card_color_str[color]);
+  fprintf(stream, "\n");
+  for (int type = 0; type < 6; ++type) {
+    indent(stream, depth);
+    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ",
+            card_type_str[type]);
+    for (int color = 0; color < 6; ++color) {
+      fprintf(stream, "%d          ", s->left_of_color_type[6 * color + type]);
+    }
+    fprintf(stream, "\n");
+  }
+  fprintf(stream, "\n");
+
+  indent(stream, depth);
+  fprintf(stream, "table (%d piles):\n", s->pile_count);
   for (card *p = s->table; p; p = p->right) {
     indent(stream, depth);
     for (card *q = p; q; q = q->down) {
@@ -197,27 +231,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     fflush(stderr);
   }
 
-  /* count the number of cards of a color / type */
-  int color_count[6];
-  int type_count[6];
-
-  for (int i = 0; i < 6; ++i)
-    color_count[i] = 0;
-
-  for (int i = 0; i < 6; ++i)
-    type_count[i] = 0;
-
-  int piles_on_table = 0;
-  for (card *t = s->table; t; t = t->right) {
-    /* early exit if get to 5 cards or more */
-    if (++piles_on_table == MAX_PILES)
-      return 0;
-
-    for (card *q = t; q; q = q->down) {
-      ++color_count[q->color];
-      ++type_count[q->type];
-    }
-  }
+  if (s->pile_count >= MAX_PILES)
+    return 0;
 
   /* no cards to play, skip to next player */
   if (s->hands[player] == NULL)
@@ -246,22 +261,18 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
   move moves[300];
   int legal_moves = 0;
 
-  /* check if statically not winnable */
-  if (s->draw_pile_size == 0 && static_check) {
-    int n_remaining = 0;
-    card *remaining[36];
+  /* check if too few removal cards remain to win */
+  if (static_check && !winnable(s))
+    return 0;
 
-    /* from hands */
-    for (int player = 0; player < 2; ++player)
-      for (card *h = s->hands[player]; h; h = h->down)
-        remaining[n_remaining++] = h;
-    /* from table */
-    for (card *t = s->table; t; t = t->right)
-      for (card *q = t; q; q = q->down)
-        remaining[n_remaining++] = q;
-
-    if (!winnable(remaining, n_remaining))
-      return 0;
+  /* count what's removable on table */
+  int color_count[6] = {0};
+  int type_count[6] = {0};
+  for (card *x = s->table; x; x = x->right) {
+    card *y = x;
+    while (y->down) y = y->down;
+    ++color_count[y->color];
+    ++type_count[y->type];
   }
 
   /* generate all moves */
@@ -269,9 +280,9 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
   for (card **h = &s->hands[player]; *h; h = &(*h)->down, ++hand_idx) {
     card *c = *h;
     /* avoid illegal moves */
-    if ((piles_on_table + 1) >= MAX_PILES && c->action == GIVE)
+    if ((s->pile_count + 1) >= MAX_PILES && c->action == GIVE)
       continue;
-    else if ((piles_on_table + (cards_in_hand == 1 ? 1 : 2)) >= MAX_PILES &&
+    else if ((s->pile_count + (cards_in_hand == 1 ? 1 : 2)) >= MAX_PILES &&
              c->action == PLUS_ONE)
       continue;
 
@@ -315,7 +326,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         ++pairs;
       }
       /* the card cannot be played with an extra */
-      if (pairs == 0 && piles_on_table < MAX_PILES - 1) {
+      if (pairs == 0 && s->pile_count < MAX_PILES - 1) {
         move *m = &moves[legal_moves++];
         m->hand = h;
         m->extra = NULL;
@@ -343,7 +354,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
       if ((action == PLUS_ONE && m.extra &&
            (m.hand == m.extra ? (*m.hand)->down : *m.extra)->action ==
                PLUS_ONE) ||
-          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] >= 2) ||
+          (action == REMOVE_TYPE &&
+           type_count[(*m.hand)->remove_type] >= 2) ||
           (action == REMOVE_COLOR &&
            color_count[(*m.hand)->remove_color] >= 2) ||
           (action == TAKE && m.extra &&
@@ -362,7 +374,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
       move m = moves[ii];
       enum card_action action = (*m.hand)->action;
       if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
-          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] == 0) ||
+          (action == REMOVE_TYPE &&
+           type_count[(*m.hand)->remove_type] == 0) ||
           (action == REMOVE_COLOR &&
            color_count[(*m.hand)->remove_color] == 0)) {
         moves[ii] = moves[jj];
@@ -409,6 +422,11 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
           removed_table[num_removed] = p;
           ++num_removed;
 
+          /* keep track of what is removed */
+          --s->pile_count;
+          for (card *r = *p; r; r = r->down)
+            remove_card(s, r);
+
           /* remove from table (instead of advancing p) */
           *p = (*p)->right;
         } else {
@@ -450,6 +468,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         /* remove it from the hand */
         *m.extra = second->down;
         second->down = NULL;
+        ++s->pile_count;
         break;
       }
 
@@ -469,6 +488,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     if (!(m.extra && (c->action == COVER || c->action == TAKE))) {
       c->right = s->table;
       s->table = c;
+      ++s->pile_count;
     }
 
     /* take a card from the pile */
@@ -497,6 +517,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     /* remove card from table */
     if (!(m.extra && (c->action == COVER || c->action == TAKE))) {
       s->table = s->table->right;
+      --s->pile_count;
     }
 
     /* reinsert removed piles */
@@ -504,6 +525,10 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
       card *tmp = *removed_table[i];
       *removed_table[i] = removed[i];
       removed[i]->right = tmp;
+
+      ++s->pile_count;
+      for (card *r = removed[i]; r; r = r->down)
+        add_card(s, r);
     }
 
     /* undo action */
@@ -529,6 +554,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         /* remove from table */
         s->table = s->table->right;
         (*m.extra)->right = NULL; /* optional */
+        --s->pile_count;
         break;
       }
       case GIVE: {
@@ -596,6 +622,21 @@ static void init_state(game_state *s) {
   /* create a pile that can be shuffled */
   for (int i = 0; i < 36; ++i)
     s->pile[i] = &s->cards[i];
+
+  s->cards_left = 36;
+  for (int i = 0; i < 36; ++i)
+    s->left_of_color_type[i] = 1;
+  s->pile_count = 0;
+  s->count_cover = 6;
+
+  for (int i = 0; i < 6; ++i)
+    s->color_count[i] = 6;
+  for (int i = 0; i < 6; ++i)
+    s->type_count[i] = 6;
+  for (int i = 0; i < 6; ++i)
+    s->can_remove_color[i] = 1;
+  for (int i = 0; i < 6; ++i)
+    s->can_remove_type[i] = 1;
 }
 
 static void random_init(game_state *s) {
@@ -649,6 +690,21 @@ static void copy_game_state(game_state *src, game_state *dst) {
   dst->draw_pile_size = src->draw_pile_size;
   dst->nodes = src->nodes;
   dst->table = src->table ? dst->cards + (src->table - src->cards) : NULL;
+
+  dst->cards_left = src->cards_left;
+  for (int i = 0; i < 36; ++i)
+    dst->left_of_color_type[i] = src->left_of_color_type[i];
+  dst->pile_count = src->pile_count;
+  dst->count_cover = src->count_cover;
+
+  for (int i = 0; i < 6; ++i)
+    dst->color_count[i] = src->color_count[i];
+  for (int i = 0; i < 6; ++i)
+    dst->type_count[i] = src->type_count[i];
+  for (int i = 0; i < 6; ++i)
+    dst->can_remove_color[i] = src->can_remove_color[i];
+  for (int i = 0; i < 6; ++i)
+    dst->can_remove_type[i] = src->can_remove_type[i];
 }
 
 static saved_move idx_to_move(game_state *s, int idx) {
@@ -818,10 +874,15 @@ int main(void) {
           while (q->down)
             q = q->down;
           if ((c->action == REMOVE_COLOR && q->color == c->remove_color) ||
-              (c->action == REMOVE_TYPE && q->type == c->remove_type))
+              (c->action == REMOVE_TYPE && q->type == c->remove_type)) {
+              /* keep track of what is removed */
+              --game.pile_count;
+              for (card *r = *p; r; r = r->down)
+                remove_card(&game, r);
             *p = (*p)->right;
-          else
+          } else {
             p = &(*p)->right;
+          }
         }
       }
 
@@ -864,6 +925,7 @@ int main(void) {
           /* remove it from the hand */
           *m.extra = second->down;
           second->down = NULL;
+          ++game.pile_count;
           break;
         }
 
@@ -885,6 +947,7 @@ int main(void) {
       if (!(m.extra && (c->action == COVER || c->action == TAKE))) {
         c->right = game.table;
         game.table = c;
+        ++game.pile_count;
       }
 
       /* take a card from the pile */
