@@ -1,8 +1,10 @@
-# The Brain game
+# The Brain game simulator
 
-Cooperative card game with 36 cards. Every player gets 5 cards from the pile.
-Each card has a color, type and action. In a player's turn, a card has to be
-played on the table, and it's action has to be performed:
+Cooperative card game wiith 36 cards by Peter Jürgensen. Every player gets 5
+cards from the pile.  Each card has a color, type and action. In a player's
+turn, a card has to be played on the table, and it's action has to be
+performed:
+
 - give card from hand to other player;
 - take pile from table back in hand (if it doesn't contain a take card itself);
 - cover pile on table;
