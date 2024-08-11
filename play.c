@@ -178,15 +178,16 @@ static void print_state(FILE *stream, game_state *s, int depth) {
   indent(stream, depth);
   fprintf(stream, "          ");
   for (int color = 0; color < 6; ++color)
-    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ",
-            card_color_str[color]);
+    fprintf(stream, "%d%s %-10s", s->color_count[color],
+            s->can_remove_color[color] ? "*" : " ", card_color_str[color]);
   fprintf(stream, "\n");
   for (int type = 0; type < 6; ++type) {
     indent(stream, depth);
-    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ",
-            card_type_str[type]);
+    fprintf(stream, "%d%s %-10s", s->type_count[type],
+            s->can_remove_type[type] ? "*" : " ", card_type_str[type]);
     for (int color = 0; color < 6; ++color) {
-      fprintf(stream, "%d          ", s->left_of_color_type[6 * color + type]);
+      fprintf(stream, "%d            ",
+              s->left_of_color_type[6 * color + type]);
     }
     fprintf(stream, "\n");
   }
