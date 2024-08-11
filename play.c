@@ -285,13 +285,20 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
 
   /* generate all moves */
   int hand_idx = 0;
+  int piles_left = MAX_PILES - s->pile_count;
   for (card **h = &s->hands[player]; *h; h = &(*h)->down, ++hand_idx) {
     card *c = *h;
-    /* avoid illegal moves */
-    if ((s->pile_count + 1) >= MAX_PILES && c->action == GIVE)
+    /* avoid creating more piles than allowed */
+    if (c->action == GIVE && piles_left <= 0)
       continue;
-    else if ((s->pile_count + (cards_in_hand == 1 ? 1 : 2)) >= MAX_PILES &&
-             c->action == PLUS_ONE)
+    else if (c->action == REMOVE_COLOR && piles_left <= 0 &&
+             color_count[c->remove_color] == 0)
+      continue;
+    else if (c->action == REMOVE_TYPE && piles_left <= 0 &&
+             type_count[c->remove_type] == 0)
+      continue;
+    else if (c->action == PLUS_ONE &&
+             piles_left <= (cards_in_hand == 1 ? 1 : 2))
       continue;
 
     /* generate cards to play extra */
