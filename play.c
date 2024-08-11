@@ -111,6 +111,9 @@ static void remove_card(game_state *s, card *c) {
     break;
   case REMOVE_COLOR:
     s->can_remove_color[c->remove_color] = 0;
+    break;
+  default:
+    break;
   }
 
   s->left_of_color_type[c->color * 6 + c->type] = 0;
@@ -129,6 +132,9 @@ static void add_card(game_state *s, card *c) {
     break;
   case REMOVE_COLOR:
     s->can_remove_color[c->remove_color] = 1;
+    break;
+  default:
+    break;
   }
 
   s->left_of_color_type[c->color * 6 + c->type] = 1;
@@ -480,6 +486,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         give->down = tmp;
         break;
       }
+      default:
+        break;
       }
     }
 
@@ -563,6 +571,8 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
         (*m.extra)->down = tmp;
         break;
       }
+      default:
+        break;
       }
     }
 
@@ -957,6 +967,8 @@ int main(void) {
           give->open = 1;
           break;
         }
+        default:
+          break;
         }
       }
 
