@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -232,7 +233,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
 
   if (verbose) {
     indent(stderr, s->depth);
-    fprintf(stderr, "nodes: %lu. depth = %d\n", s->nodes, s->depth);
+    fprintf(stderr, "nodes: %" PRIu64 ". depth = %d\n", s->nodes, s->depth);
     print_state(stderr, s, s->depth);
     fprintf(stderr, "\n");
     fflush(stderr);
