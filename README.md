@@ -32,9 +32,9 @@ rates. From about 500 games I got:
 
 Since the branching factor is high and the game is stochastic, the
 implementation is a monte carlo simulation with search. It's not monte carlo
-tree search (the branching factor is pretty high, and wins by random play are
-very rare). In a simulation, the other player's unknown cards and the pile are
-shuffled and the other player receives new cards, and from there a win is
+tree search (wins by random play are very rare, so I doubt that works). In
+a simulation, the other player's unknown cards and the pile are shuffled and
+the other player receives new cards, and from there a win is
 searched where the game is played with open cards. Search has a relatively
 small budget of max number of nodes to explore, since exhaustive search is
 rather slow. Search is a simple heuristically best-first depth-first search to
