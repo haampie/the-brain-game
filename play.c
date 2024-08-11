@@ -4,7 +4,7 @@
 
 #define MAX_PILES 5
 #define NUM_START 5
-#define MAX_NODES_PER_SIMULATION 1000
+#define MAX_NODES_PER_SIMULATION 500
 #define TOTAL_GAMES 100
 #define TOTAL_SIMULATIONS 5000
 
@@ -362,8 +362,9 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     }
   } else {
     /* reorder moves best-first */
-    for (int i = 0, j = 0; i < legal_moves; ++i) {
-      /* move +1 with +1 to front, move cards that remove >= 2 to front */
+    for (int good = 0, bad = legal_moves - 1, i = 0; i < bad;) {
+      /* move +1 with +1 to front, move cards that remove >= 2 to front, move
+       * take removal cards to front */
       move m = moves[i];
       enum card_action action = (*m.hand)->action;
       if ((action == PLUS_ONE && m.extra &&
@@ -375,25 +376,22 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
           (action == TAKE && m.extra &&
            ((*m.extra)->action == REMOVE_TYPE ||
             (*m.extra)->action == REMOVE_COLOR))) {
-        moves[i] = moves[j];
-        moves[j] = m;
-        ++j;
+        moves[i] = moves[good];
+        moves[good] = m;
+        ++good;
+        ++i;
       }
-    }
-
-    /* move take back +1 to back, move remove nothing to back */
-    for (int i = 0, j = 0; i < legal_moves; ++i) {
-      int ii = legal_moves - i - 1;
-      int jj = legal_moves - j - 1;
-      move m = moves[ii];
-      enum card_action action = (*m.hand)->action;
-      if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
-          (action == REMOVE_TYPE && type_count[(*m.hand)->remove_type] == 0) ||
-          (action == REMOVE_COLOR &&
-           color_count[(*m.hand)->remove_color] == 0)) {
-        moves[ii] = moves[jj];
-        moves[jj] = m;
-        ++j;
+      /* move take back +1 to back, move remove nothing to back */
+      else if ((action == TAKE && m.extra && (*m.extra)->action == PLUS_ONE) ||
+               (action == REMOVE_TYPE &&
+                type_count[(*m.hand)->remove_type] == 0) ||
+               (action == REMOVE_COLOR &&
+                color_count[(*m.hand)->remove_color] == 0)) {
+        moves[i] = moves[bad];
+        moves[bad] = m;
+        --bad;
+      } else {
+        ++i;
       }
     }
   }
