@@ -2,8 +2,7 @@
 
 Cooperative card game with 36 cards by Peter Jürgensen. Every player gets 5
 cards from the draw pile. Each card has a color, type and action. In a player's
-turn, a card has to be played on the table, and it's action has to be
-performed:
+turn, a card has to be played on the table, and its action has to be performed:
 
 - give card from hand to other player;
 - take pile from table back in hand (if it doesn't contain a take card itself);
