@@ -828,19 +828,9 @@ int main(void) {
             break;
         }
 
-        if (result == 1 && game.draw_pile_size == 0) {
-          printf("finish with\n");
-          for (int i = 0; simulation.stack[i].hand; ++i) {
-            saved_move m = simulation.stack[i];
-            print_card(stdout, m.hand, 0);
-            if (m.extra) {
-              printf(" ");
-              print_card(stdout, m.extra, 0);
-            }
-            printf("\n");
-          }
+        /* todo: early exit with a deterministic win here */
+        if (result == 1 && game.draw_pile_size == 0)
           break;
-        }
       }
 
       printf("losses = %d. wins = %d\n", losses, wins);
