@@ -6,7 +6,7 @@
 #define MAX_PILES 5
 #define NUM_START 5
 #define MAX_NODES_PER_SIMULATION 250
-#define TOTAL_GAMES 500
+#define TOTAL_GAMES 100
 #define TOTAL_SIMULATIONS 5000
 
 /* random numbers */
@@ -173,14 +173,15 @@ static void print_state(FILE *stream, game_state *s, int depth) {
   indent(stream, depth);
   fprintf(stream, "          ");
   for (int color = 0; color < 6; ++color)
-    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ", card_color_str[color]);
+    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ",
+            card_color_str[color]);
   fprintf(stream, "\n");
   for (int type = 0; type < 6; ++type) {
     indent(stream, depth);
-    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ", card_type_str[type]);
+    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ",
+            card_type_str[type]);
     for (int color = 0; color < 6; ++color) {
-      fprintf(stream, "%d          ",
-              s->left_of_color_type[6 * color + type]);
+      fprintf(stream, "%d          ", s->left_of_color_type[6 * color + type]);
     }
     fprintf(stream, "\n");
   }
@@ -347,7 +348,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     }
   }
 
-  if (s->depth == 0) {
+  if (forced_move >= 0) {
     /* force the dictated move */
     if (legal_moves > 0) {
       moves[0] = moves[forced_move % legal_moves];
@@ -509,7 +510,7 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     /* next turn */
     ++s->depth;
     won = play(s, other, c->action == REMOVE_TYPE || c->action == REMOVE_COLOR,
-               max_nodes, 0);
+               max_nodes, -1);
     --s->depth;
 
     /* put card back on the pile */
@@ -583,8 +584,11 @@ static int play(game_state *s, int player, int static_check, uint64_t max_nodes,
     if (won != 0)
       break;
 
-    s->stack[s->depth].hand = NULL;
-    s->stack[s->depth].extra = NULL;
+    /* hack */
+    if (s->depth > 0) {
+      s->stack[s->depth].hand = NULL;
+      s->stack[s->depth].extra = NULL;
+    }
   }
 
   if (won == 1) {
@@ -724,7 +728,9 @@ int main(void) {
   init_state(&simulation);
 
   /* hand * (extra or NULL) */
-  int move_count[36 * 37];
+  int win_count[36 * 37];
+  int loss_count[36 * 37];
+  int unknown_count[36 * 37];
 
   /* number of games */
   for (int g = 0; g < TOTAL_GAMES; ++g) {
@@ -751,16 +757,35 @@ int main(void) {
 
       printf("\n\nTURN %d (player %d)\n", turn, player + 1);
 
-      for (int i = 0; i < 36 * 37; ++i)
-        move_count[i] = 0;
+      for (int i = 0; i < 36 * 37; ++i) {
+        win_count[i] = 0;
+        loss_count[i] = 0;
+        unknown_count[i] = 0;
+      }
 
       int wins = 0, losses = 0;
 
-      for (int run = 0; run < TOTAL_SIMULATIONS; ++run) {
+      /* if there are no cards to draw we have perfect information: no need for
+       * monte carlo */
+      if (simulation.draw_pile_size == 0) {
         simulation.nodes = 0;
 
-        /* put the other player's cards back in the pile */
-        if (simulation.draw_pile_size > 0) {
+        int result = play(&simulation, player, 0, -1, -1);
+
+        if (result != 1) {
+          ++losses;
+        } else {
+          saved_move m = simulation.stack[0];
+          int card_idx = (m.hand - simulation.cards) * 37 +
+                         (m.extra ? m.extra - simulation.cards : 36);
+          ++win_count[card_idx];
+        }
+      } else {
+        /* do a monte carlo simulation */
+        for (int run = 0; run < TOTAL_SIMULATIONS; ++run) {
+          simulation.nodes = 0;
+
+          /* put the other player's cards back in the pile */
           int num_cards_other_player = 0;
           card **other_hand = &simulation.hands[other];
           while (*other_hand) {
@@ -791,29 +816,25 @@ int main(void) {
             c->down = simulation.hands[other];
             simulation.hands[other] = c;
           }
-        }
 
-        uint64_t max_nodes =
-            game.draw_pile_size == 0 ? -1 : MAX_NODES_PER_SIMULATION;
+          int result =
+              play(&simulation, player, 0, MAX_NODES_PER_SIMULATION, run);
 
-        int result = play(&simulation, player, 0, max_nodes, run);
-
-        /* could not complete in time */
-        if (result == 0) {
-          ++losses;
-        } else if (result == 1) {
-          ++wins;
           saved_move m = simulation.stack[0];
           int card_idx = (m.hand - simulation.cards) * 37 +
                          (m.extra ? m.extra - simulation.cards : 36);
-          /* increment count and early exit if we certainly play this */
-          if (++move_count[card_idx] > TOTAL_SIMULATIONS / 2)
-            break;
+          if (result == 0) {
+            ++losses;
+            ++loss_count[card_idx];
+          } else if (result == 1) {
+            ++wins;
+            /* increment count and early exit if we certainly play this */
+            if (++win_count[card_idx] > TOTAL_SIMULATIONS / 2)
+              break;
+          } else {
+            ++unknown_count[card_idx];
+          }
         }
-
-        /* todo: early exit with a deterministic win here */
-        if (result == 1 && game.draw_pile_size == 0)
-          break;
       }
 
       printf("losses = %d. wins = %d\n", losses, wins);
@@ -821,13 +842,15 @@ int main(void) {
       int best_move = 0;
       int best_move_idx = -1;
       for (int i = 0; i < 36 * 37; ++i) {
-        if (move_count[i] > best_move) {
-          best_move = move_count[i];
+        /* assume that no solution found is 50% chance of winning */
+        int win_factor = 2 * win_count[i] + unknown_count[i];
+        if (win_factor > best_move) {
+          best_move = win_factor;
           best_move_idx = i;
         }
       }
       for (int i = 0; i < 36 * 37; ++i) {
-        if (move_count[i] == 0)
+        if (win_count[i] == 0 && unknown_count[i] == 0)
           continue;
         saved_move mi = idx_to_move(&game, i);
         print_card(stdout, mi.hand, 0);
@@ -836,9 +859,10 @@ int main(void) {
           print_card(stdout, mi.extra, 0);
         }
         printf("\n");
-        for (int j = 0; j < (70.0 * move_count[i]) / best_move; ++j)
+        int win_factor = 2 * win_count[i] + unknown_count[i];
+        for (int j = 0; j < (70.0 * win_factor) / best_move; ++j)
           printf("*");
-        printf(" (%d)", move_count[i]);
+        printf(" (%d)", win_factor);
         if (i == best_move_idx)
           printf(" !!");
         printf("\n");

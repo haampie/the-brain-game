@@ -24,9 +24,9 @@ make test
 compiles and runs a number of randomized two player games and reports win
 rates. From about 500 games I got:
 
-- hard (< 5 piles): 86%
-- medium (< 6 piles): 96%
-- easy (< 7 piles): 99%
+- hard (< 5 piles): 89.6%
+- medium (< 6 piles): 97.2%
+- easy (< 7 piles): 100%
 
 ## How it works
 
@@ -38,8 +38,9 @@ the other player receives new cards, and from there a win is
 searched where the game is played with open cards. Search has a relatively
 small budget of max number of nodes to explore, since exhaustive search is
 rather slow. Search is a simple heuristically best-first depth-first search to
-find a solution quickly. The move with most wins from simulations is picked as
-the best move.
+find a solution quickly. Search has 3 outcomes: win, loss, or unknown.
+Basically unknown is modeled as 50/50, so the best move is considered the one
+that maximizes 2 * #win + #unknown.
 
 The advantage of best-first dfs is that it require very little memory, and it
 seems to work alright in practice. The whole thing could be parallelized over
