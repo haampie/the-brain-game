@@ -96,8 +96,6 @@ typedef struct game_state {
   int left_of_color_type[36]; /* bool matrix[i, j] where i is color, j type */
   int pile_count;             /* number of piles on the table */
   int count_cover;            /* number of non-discarded cover cards */
-  int color_count[6];         /* number of non-discarded color cards */
-  int type_count[6];          /* number of non-discarded type cards */
   int can_remove_color[6];    /* whether removal of color is not discarded */
   int can_remove_type[6];     /* whether removal of type is not discarded */
 } game_state;
@@ -118,8 +116,6 @@ static void remove_card(game_state *s, card *c) {
   }
 
   s->left_of_color_type[c->color * 6 + c->type] = 0;
-  --s->color_count[c->color];
-  --s->type_count[c->type];
   --s->cards_left;
 }
 
@@ -139,8 +135,6 @@ static void add_card(game_state *s, card *c) {
   }
 
   s->left_of_color_type[c->color * 6 + c->type] = 1;
-  ++s->color_count[c->color];
-  ++s->type_count[c->type];
   ++s->cards_left;
 }
 
@@ -179,15 +173,13 @@ static void print_state(FILE *stream, game_state *s, int depth) {
   indent(stream, depth);
   fprintf(stream, "          ");
   for (int color = 0; color < 6; ++color)
-    fprintf(stream, "%d%s %-10s", s->color_count[color],
-            s->can_remove_color[color] ? "*" : " ", card_color_str[color]);
+    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ", card_color_str[color]);
   fprintf(stream, "\n");
   for (int type = 0; type < 6; ++type) {
     indent(stream, depth);
-    fprintf(stream, "%d%s %-10s", s->type_count[type],
-            s->can_remove_type[type] ? "*" : " ", card_type_str[type]);
+    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ", card_type_str[type]);
     for (int color = 0; color < 6; ++color) {
-      fprintf(stream, "%d            ",
+      fprintf(stream, "%d          ",
               s->left_of_color_type[6 * color + type]);
     }
     fprintf(stream, "\n");
@@ -646,10 +638,6 @@ static void init_state(game_state *s) {
   s->count_cover = 6;
 
   for (int i = 0; i < 6; ++i)
-    s->color_count[i] = 6;
-  for (int i = 0; i < 6; ++i)
-    s->type_count[i] = 6;
-  for (int i = 0; i < 6; ++i)
     s->can_remove_color[i] = 1;
   for (int i = 0; i < 6; ++i)
     s->can_remove_type[i] = 1;
@@ -713,10 +701,6 @@ static void copy_game_state(game_state *src, game_state *dst) {
   dst->pile_count = src->pile_count;
   dst->count_cover = src->count_cover;
 
-  for (int i = 0; i < 6; ++i)
-    dst->color_count[i] = src->color_count[i];
-  for (int i = 0; i < 6; ++i)
-    dst->type_count[i] = src->type_count[i];
   for (int i = 0; i < 6; ++i)
     dst->can_remove_color[i] = src->can_remove_color[i];
   for (int i = 0; i < 6; ++i)
