@@ -93,11 +93,11 @@ typedef struct game_state {
   int depth;
 
   int cards_left;             /* number of non-discarded cards */
-  int left_of_color_type[36]; /* bool matrix[i, j] where i is color, j type */
+  uint8_t left_of_color_type[6]; /* bool matrix[i, j] where i in bytes is color, j in bits is type */
   int pile_count;             /* number of piles on the table */
   int count_cover;            /* number of non-discarded cover cards */
-  int can_remove_color[6];    /* whether removal of color is not discarded */
-  int can_remove_type[6];     /* whether removal of type is not discarded */
+  uint8_t can_remove_color;    /* whether removal of color is not discarded */
+  uint8_t can_remove_type;     /* whether removal of type is not discarded */
 } game_state;
 
 static void remove_card(game_state *s, card *c) {
@@ -106,16 +106,16 @@ static void remove_card(game_state *s, card *c) {
     --s->count_cover;
     break;
   case REMOVE_TYPE:
-    s->can_remove_type[c->remove_type] = 0;
+    s->can_remove_type ^= 1 << c->remove_type;
     break;
   case REMOVE_COLOR:
-    s->can_remove_color[c->remove_color] = 0;
+    s->can_remove_color ^= 1 << c->remove_color;
     break;
   default:
     break;
   }
 
-  s->left_of_color_type[c->color * 6 + c->type] = 0;
+  s->left_of_color_type[c->color] ^= 1 << c->type;
   --s->cards_left;
 }
 
@@ -125,16 +125,16 @@ static void add_card(game_state *s, card *c) {
     ++s->count_cover;
     break;
   case REMOVE_TYPE:
-    s->can_remove_type[c->remove_type] = 1;
+    s->can_remove_type ^= 1 << c->remove_type;
     break;
   case REMOVE_COLOR:
-    s->can_remove_color[c->remove_color] = 1;
+    s->can_remove_color ^= 1 << c->remove_color;
     break;
   default:
     break;
   }
 
-  s->left_of_color_type[c->color * 6 + c->type] = 1;
+  s->left_of_color_type[c->color] ^= 1 << c->type;
   ++s->cards_left;
 }
 
@@ -152,14 +152,14 @@ static void print_card(FILE *stream, card *p, int show_open) {
 }
 
 static int winnable(game_state *s) {
-  int total_left = s->cards_left;
-  for (int color = 0; color < 6; ++color)
-    for (int type = 0; type < 6; ++type)
-      total_left -= (s->can_remove_color[color] | s->can_remove_type[type]) &
-                    s->left_of_color_type[6 * color + type];
+  int x = 0;
+  for (int color = 0; color < 6; ++color) {
+    char bit = (-((s->can_remove_color >> color) & 1)) | s->can_remove_type;
+    x += __builtin_popcount(bit & s->left_of_color_type[color]);
+  }
 
   /* every cover card can remove at best one other card */
-  return total_left - s->count_cover < MAX_PILES;
+  return s->cards_left - x - s->count_cover < MAX_PILES;
 }
 
 static void indent(FILE *stream, int depth) {
@@ -173,15 +173,15 @@ static void print_state(FILE *stream, game_state *s, int depth) {
   indent(stream, depth);
   fprintf(stream, "          ");
   for (int color = 0; color < 6; ++color)
-    fprintf(stream, "%s%-10s", s->can_remove_color[color] ? "*" : " ",
+    fprintf(stream, "%s%-10s", (s->can_remove_color >> color) & 1 ? "*" : " ",
             card_color_str[color]);
   fprintf(stream, "\n");
   for (int type = 0; type < 6; ++type) {
     indent(stream, depth);
-    fprintf(stream, "%s%-10s", s->can_remove_type[type] ? "*" : " ",
+    fprintf(stream, "%s%-10s", (s->can_remove_type >> type) & 1 ? "*" : " ",
             card_type_str[type]);
     for (int color = 0; color < 6; ++color) {
-      fprintf(stream, "%d          ", s->left_of_color_type[6 * color + type]);
+      fprintf(stream, "%d          ", (s->left_of_color_type[color] >> type) & 1);
     }
     fprintf(stream, "\n");
   }
@@ -636,15 +636,13 @@ static void init_state(game_state *s) {
     s->pile[i] = &s->cards[i];
 
   s->cards_left = 36;
-  for (int i = 0; i < 36; ++i)
-    s->left_of_color_type[i] = 1;
+  for (int i = 0; i < 6; ++i)
+    s->left_of_color_type[i] = 0x3f;
   s->pile_count = 0;
   s->count_cover = 6;
 
-  for (int i = 0; i < 6; ++i)
-    s->can_remove_color[i] = 1;
-  for (int i = 0; i < 6; ++i)
-    s->can_remove_type[i] = 1;
+  s->can_remove_color = 0x3f;  /* 0b111111 */
+  s->can_remove_type = 0x3f;  /* 0b111111 */
 }
 
 static void random_init(game_state *s) {
@@ -700,15 +698,13 @@ static void copy_game_state(game_state *src, game_state *dst) {
   dst->table = src->table ? dst->cards + (src->table - src->cards) : NULL;
 
   dst->cards_left = src->cards_left;
-  for (int i = 0; i < 36; ++i)
+  for (int i = 0; i < 6; ++i)
     dst->left_of_color_type[i] = src->left_of_color_type[i];
   dst->pile_count = src->pile_count;
   dst->count_cover = src->count_cover;
 
-  for (int i = 0; i < 6; ++i)
-    dst->can_remove_color[i] = src->can_remove_color[i];
-  for (int i = 0; i < 6; ++i)
-    dst->can_remove_type[i] = src->can_remove_type[i];
+  dst->can_remove_color = src->can_remove_color;
+  dst->can_remove_type = src->can_remove_type;
 }
 
 static saved_move idx_to_move(game_state *s, int idx) {
