@@ -67,7 +67,7 @@ typedef struct card {
   enum card_type remove_type;
 
   /* 1 if taken or given */
-  int open;
+  int visible;
 } card;
 
 typedef struct move {
@@ -92,12 +92,13 @@ typedef struct game_state {
   uint64_t nodes;
   int depth;
 
-  int cards_left;             /* number of non-discarded cards */
-  uint8_t left_of_color_type[6]; /* bool matrix[i, j] where i in bytes is color, j in bits is type */
-  int pile_count;             /* number of piles on the table */
-  int count_cover;            /* number of non-discarded cover cards */
-  uint8_t can_remove_color;    /* whether removal of color is not discarded */
-  uint8_t can_remove_type;     /* whether removal of type is not discarded */
+  int cards_left;                /* number of non-discarded cards */
+  uint8_t left_of_color_type[6]; /* bool matrix[i, j] where i in bytes is color,
+                                    j in bits is type */
+  int pile_count;                /* number of piles on the table */
+  int count_cover;               /* number of non-discarded cover cards */
+  uint8_t can_remove_color;      /* whether removal of color is not discarded */
+  uint8_t can_remove_type;       /* whether removal of type is not discarded */
 } game_state;
 
 static void remove_card(game_state *s, card *c) {
@@ -147,7 +148,7 @@ static void print_card(FILE *stream, card *p, int show_open) {
     fprintf(stream, ":%s%s", card_color_esc[p->remove_color],
             card_color_str[p->remove_color]);
   fprintf(stream, "\033[0m");
-  if (show_open && p->open)
+  if (show_open && p->visible)
     fprintf(stream, " [visible]");
 }
 
@@ -181,7 +182,8 @@ static void print_state(FILE *stream, game_state *s, int depth) {
     fprintf(stream, "%s%-10s", (s->can_remove_type >> type) & 1 ? "*" : " ",
             card_type_str[type]);
     for (int color = 0; color < 6; ++color) {
-      fprintf(stream, "%d          ", (s->left_of_color_type[color] >> type) & 1);
+      fprintf(stream, "%d          ",
+              (s->left_of_color_type[color] >> type) & 1);
     }
     fprintf(stream, "\n");
   }
@@ -615,7 +617,7 @@ static void init_state(game_state *s) {
     s->cards[i].type = (s->cards[i].color - s->cards[i].action + 6) % 6;
     s->cards[i].remove_color = (s->cards[i].color + 1) % 6;
     s->cards[i].remove_type = (s->cards[i].type + 5) % 6;
-    s->cards[i].open = 0;
+    s->cards[i].visible = 0;
   }
 
   s->table = NULL;
@@ -641,7 +643,7 @@ static void init_state(game_state *s) {
   s->pile_count = 0;
   s->count_cover = 6;
 
-  s->can_remove_color = 0x3f;  /* 0b111111 */
+  s->can_remove_color = 0x3f; /* 0b111111 */
   s->can_remove_type = 0x3f;  /* 0b111111 */
 }
 
@@ -669,7 +671,7 @@ static void random_init(game_state *s) {
 static void copy_game_state(game_state *src, game_state *dst) {
   for (int i = 0; i < 36; ++i) {
     dst->pile[i] = dst->cards + (src->pile[i] - src->cards);
-    dst->cards[i].open = src->cards[i].open;
+    dst->cards[i].visible = src->cards[i].visible;
     dst->cards[i].right = src->cards[i].right
                               ? dst->cards + (src->cards[i].right - src->cards)
                               : NULL;
@@ -786,7 +788,7 @@ int main(void) {
           card **other_hand = &simulation.hands[other];
           while (*other_hand) {
             /* retain visible cards */
-            if ((*other_hand)->open) {
+            if ((*other_hand)->visible) {
               other_hand = &(*other_hand)->down;
               continue;
             }
@@ -938,7 +940,7 @@ int main(void) {
 
           /* mark the cards as open */
           while (*h) {
-            (*h)->open = 1;
+            (*h)->visible = 1;
             h = &(*h)->down;
           }
 
@@ -965,7 +967,7 @@ int main(void) {
           *m.extra = give->down;
           give->down = tmp;
           /* mark as open */
-          give->open = 1;
+          give->visible = 1;
           break;
         }
         default:
