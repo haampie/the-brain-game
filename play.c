@@ -6,7 +6,7 @@
 #define MAX_PILES 5
 #define NUM_START 5
 #define MAX_NODES_PER_SIMULATION 250
-#define TOTAL_GAMES 100
+#define TOTAL_GAMES 10
 #define TOTAL_SIMULATIONS 5000
 
 /* random numbers */
